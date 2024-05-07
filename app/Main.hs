@@ -7,6 +7,7 @@ module Main where
 
 import Control.Monad (when)
 import Torch
+import Text.CSV
 
 model :: Linear -> Tensor -> Tensor
 model state input = squeezeAll $ linear state input
