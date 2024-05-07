@@ -35,8 +35,12 @@ library
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
       base >=4.7 && <5
+    , bytestring
+    , cassava
     , hasktorch
     , hasktorch-tools
+    , text
+    , vector
   default-language: Haskell2010
 
 executable bordeaux-intern2024-exe
@@ -51,8 +55,12 @@ executable bordeaux-intern2024-exe
   build-depends:
       base >=4.7 && <5
     , bordeaux-intern2024
+    , bytestring
+    , cassava
     , hasktorch
     , hasktorch-tools
+    , text
+    , vector
   default-language: Haskell2010
 
 test-suite bordeaux-intern2024-test
@@ -68,6 +76,10 @@ test-suite bordeaux-intern2024-test
   build-depends:
       base >=4.7 && <5
     , bordeaux-intern2024
+    , bytestring
+    , cassava
     , hasktorch
     , hasktorch-tools
+    , text
+    , vector
   default-language: Haskell2010
