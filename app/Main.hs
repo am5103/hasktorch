@@ -68,7 +68,7 @@ printParams trained = do
 --csv_to_array :: ByteString -> 
 
 -- リストの最初の7個のFloatをとってきてそれを追加するリストを作成する
-make_7days_tempature_list :: [Float] -> [Float] -> [Float]
+make_7days_tempature_list :: [Float] -> [[Float]] -> [[Float]]
 make_7days_tempature_list [] sevendays_list = []
 make_7days_tempature_list [x1] sevendays_list = []
 make_7days_tempature_list [x1,x2] sevendays_list = []
@@ -76,8 +76,8 @@ make_7days_tempature_list [x1,x2,x3] sevendays_list = []
 make_7days_tempature_list [x1,x2,x3,x4] sevendays_list = []
 make_7days_tempature_list [x1,x2,x3,x4,x5] sevendays_list = []
 make_7days_tempature_list [x1,x2,x3,x4,x5,x6] sevendays_list = []
-make_7days_tempature_list [x1,x2,x3,x4,x5,x6,x7] sevendays_list = sevendays_list + [x1,x2,x3,x4,x5,x6,x7] --気温のリストの長さが７の時に終わり
-make_7days_tempature_list tempature_list sevendays_list = make_7days_tempature_list (tail tempature_list) (sevendays_list + (Prelude.take 7 tempature_list)) 
+make_7days_tempature_list [x1,x2,x3,x4,x5,x6,x7] sevendays_list = (sevendays_list ++ [[x1,x2,x3,x4,x5,x6,x7]]) --気温のリストの長さが７の時に終わり
+make_7days_tempature_list tempature_list sevendays_list = make_7days_tempature_list (tail tempature_list) (sevendays_list ++ ([Prelude.take 7 tempature_list])) 
 
 -- Tempature型を受け取ったらdaily_mean_tempratureを返す                                                                               tempature_listの最初を抜いたリスト　tempature_listの最初から7個をsevendats_listに追加する
 return_daily_mean_temprature :: Tempature -> Float
@@ -99,9 +99,9 @@ main = do
   -- float型の気温のみのリスト
   let train_tempature_list = case decodeByName train  of
         Left err -> []
-        Right (_, v) -> make_floatlist v
+        Right (_, v) -> make_float_list v
   -- 7日間の気温のリストのリスト
-  let train_sevendays_tempature_list = make_7days_tempature_list train_tempature_list
+  let train_sevendays_tempature_list = make_7days_tempature_list train_tempature_list []
   print train_sevendays_tempature_list
   -- valid <- readFile("data/valid.csv")
 
