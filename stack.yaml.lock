@@ -124,6 +124,13 @@ packages:
   original:
     commit: 0b6912850dbffd14ed16c3fa26a0773c877ba093
     git: http://github.com/DaisukeBekki/nlp-tools.git
+- completed:
+    hackage: random-shuffle-0.0.4@sha256:d0b9783c30208d1ce05caa05139fb00372802edb6c678b73d61b5eb4eebb3aba,818
+    pantry-tree:
+      sha256: e6e1c894e726443bc7165618de6745812610e70f0df22dbe5c130bafee2c507b
+      size: 226
+  original:
+    hackage: random-shuffle-0.0.4
 snapshots:
 - completed:
     sha256: 5a59b2a405b3aba3c00188453be172b85893cab8ebc352b1ef58b0eae5d248a2

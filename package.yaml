@@ -27,6 +27,7 @@ dependencies:
 - vector
 - bytestring
 - text
+- nlp-tools
 
 ghc-options:
 - -Wall

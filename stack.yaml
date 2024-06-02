@@ -38,11 +38,18 @@ extra-deps:
   - inline-c-cpp-0.5.0.2
   - git: http://github.com/DaisukeBekki/nlp-tools.git
     commit: 0b6912850dbffd14ed16c3fa26a0773c877ba093
+  - random-shuffle-0.0.4
+  # - /home/acf16407il/.local/lib/hasktorch/nlp-tools
+
 # for hasktorch-tools
   - /home/acf16407il/.local/lib/hasktorch/hasktorch-tools
 
 #allow-newer: true
     
+# packages:
+#   - .
+#   - location: /home/acf16407il/.local/lib/hasktorch/nlp-tools
+
 build:
   haddock: false
   haddock-arguments:

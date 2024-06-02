@@ -24,6 +24,8 @@ import Data.Csv
 import Data.Text (Text)
 import qualified Data.Vector as V
 
+import ML.Exp.Chart (drawLearningCurve) 
+
 data Temprature = Temprature {
   date :: !String,
   daily_mean_temprature :: !Float }
@@ -77,6 +79,7 @@ main :: IO ()
 main = do
   -- ファイルを読み込む
   train <- BL.readFile "data/train.csv"
+  
 
   -- float型の気温のみのリスト
   let train_temprature_list = case decodeByName train  of
@@ -88,32 +91,59 @@ main = do
   -- print train_sevendays_temprature_list
   -- valid <- readFile("data/valid.csv")
   -- readFromFile ("data/train.csv")
-  -- eval <- readFile("data/eval.csv")
+  -- eval <- BL.readFile("data/eval.csv")
+  -- let eval_temprature_list = case decodeByName train  of
+  --       Left err -> []
+  --       Right (_, v) -> make_float_list v
+  -- let eval_sevendays_temprature_list = make_7days_temperature_pair_list eval_temprature_list
+  -- random_pair_list <- shuffle train_sevendays_temprature_pair_list
 
-
+  -- let eval_loss_list -- ロスを表示させるのに使う
   init <- sample $ LinearSpec {in_features = numFeatures, out_features = 1} -- sample parametrised classという型クラス　linear specモデルの設定を定義しているデータ型 
   -- infeatures 入ってくる次元を指定　
   randGen <- defaultRNG
   printParams init
-  (trained, _) <- foldLoop (init, randGen) numIters $ \(state, randGen) i -> do
+  let perEpoch = Prelude.length train_sevendays_temprature_pair_list `Prelude.div` batchSize -- 1epochの間に実行する回数
+  (trained, losses_list) <- foldLoop (init, []) numIters $ \(state, loss_list) i -> do
     -- let (input, randGen') = randn' [batchSize, numFeatures] randGen --変数を減らす　input:バッチサイズ*特徴量の配列
-    let startIdx = i * batchSize
-        endIdx = startIdx + batchSize
-        input_list =  Prelude.take (endIdx - startIdx) (drop startIdx train_sevendays_temprature_pair_list)--　バッチサイズ分もらってくる 
+    
+    let start_number = (i `mod` perEpoch)* batchSize
+        end_number = start_number + batchSize
+        input_list =  Prelude.take (end_number - start_number) (drop start_number train_sevendays_temprature_pair_list)--　バッチサイズ分もらってくる 
         (input_float, y_float) = unzip input_list
         input = asTensor input_float
         y = asTensor y_float
         y' = model state input -- なってほしい値と出た値(8日目の気温)
         loss = mseLoss y y' --mseの誤差
-    when (i `mod` 10 == 0) $ do
-      putStrLn $ "Iteration: " ++ show i ++ " | Loss: " ++ show loss --　１００回ごとに誤差を表示
-    (newParam, _) <- runStep state optimizer loss 1e-3 -- 更新してくれる関数
-    pure (newParam, randGen) 
+    -- 1epochごとに
+    -- 1. リストの順番をシャッフルする
+    -- 2. evalを用いてロスを計算
+    when (i `mod` perEpoch == 0) $ do
+      let numEpoch = i `Prelude.div` perEpoch
+      --let losse
+      putStrLn $ "epoch: " ++ show numEpoch ++ " | Loss: " ++ show loss --　１００回ごとに誤差を表示
+    (newParam, _) <- runStep state optimizer loss 1e-4 -- 更新してくれる関数 
+    let new_loss_list = if i `mod` perEpoch == 0 then loss : loss_list 
+                        else loss_list --エポック数が増えるごとにロスを更新
+    pure (newParam,new_loss_list)     
   printParams trained
+  drawLearningCurve "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/linearregression/image/loss.image" "Learning Curve" [("loss",map asValue (reverse losses_list))] 
   pure ()
   where
     optimizer = GD --勾配降下法
     defaultRNG = mkGenerator (Device CPU 0) 31415
-    batchSize = 64
-    numIters = 40
+    batchSize = 32
+    numIters = 10000
     numFeatures = 7 -- optimiser で暗点に陥らないように、やり方を考える今回は勾配
+  
+  
+  -- saveParams trainedModel "app/temperature/models/temp-model.pt"
+  -- drawLearningCurve "app/temperature/curves/graph-avg.png" "Learning Curve" [("",reverse losses)]
+
+
+-- エポックデータ全部を１回ずつみた単位？
+-- バッチ学習　全部のデータを見る　ミニバッチ　一部
+-- この単位でロスを計測したい
+-- トレーニングにtrain.csv
+-- 評価 eval
+-- train.csvだけだと過学習をしすぎちゃうのでvalid トレーニング中にロスは取るけど、そのモデルを使ってロスの更新はしない 過学習が起こったかどうかをevalデータで確認するグラフを出す
