@@ -25,6 +25,7 @@ import Data.Text (Text)
 import qualified Data.Vector as V
 
 import ML.Exp.Chart (drawLearningCurve) 
+import qualified System.Random.Shuffle
 
 data Temprature = Temprature {
   date :: !String,
@@ -47,6 +48,11 @@ model state input = squeezeAll $ linear state input
 --     bias = full' [1] (3.14 :: Float) -- aがweight bがbias(aとbを変数とおく)
 --     -- full :: forall shape dtype device a. (TensorOptions shape dtype device, Scalar a) => a -> Tensor device dtype shape
 
+-- validで計算する
+-- transpose2D:転置行列にする
+groundTruth :: Tensor -> Linear -> Tensor
+groundTruth t l = matmul t (transpose2D(toDependent l.weight)) + (toDependent l.bias)
+  
 printParams :: Linear -> IO () --パラメータを表示
 printParams trained = do
   putStrLn $ "Parameters:\n" ++ (show $ toDependent $ trained.weight)
@@ -91,25 +97,34 @@ main = do
   -- print train_sevendays_temprature_list
   -- valid <- readFile("data/valid.csv")
   -- readFromFile ("data/train.csv")
-  -- eval <- BL.readFile("data/eval.csv")
-  -- let eval_temprature_list = case decodeByName train  of
-  --       Left err -> []
-  --       Right (_, v) -> make_float_list v
-  -- let eval_sevendays_temprature_list = make_7days_temperature_pair_list eval_temprature_list
-  -- random_pair_list <- shuffle train_sevendays_temprature_pair_list
-
+  eval <- BL.readFile("data/eval.csv")
+  let eval_temprature_list = case decodeByName eval of
+        Left err -> []
+        Right (_, v) -> make_float_list v
+      eval_sevendays_temprature_pair_list = make_7days_temperature_pair_list eval_temprature_list []
+      (eval_float_list, eval_y_float) = unzip eval_sevendays_temprature_pair_list
+      eval_tensor_list = asTensor eval_float_list
+      eval_tensor_y = asTensor eval_y_float
+  valid <- BL.readFile("data/valid.csv")
+  let valid_temprature_list = case decodeByName valid of
+        Left err -> []
+        Right (_, v) -> make_float_list v
+      valid_sevendays_temprature_pair_list = make_7days_temperature_pair_list valid_temprature_list []
+      (valid_float_list, valid_y_float) = unzip valid_sevendays_temprature_pair_list
+      valid_tensor_list = asTensor valid_float_list
+      valid_tensor_y = asTensor valid_y_float
   -- let eval_loss_list -- ロスを表示させるのに使う
   init <- sample $ LinearSpec {in_features = numFeatures, out_features = 1} -- sample parametrised classという型クラス　linear specモデルの設定を定義しているデータ型 
   -- infeatures 入ってくる次元を指定　
   randGen <- defaultRNG
   printParams init
   let perEpoch = Prelude.length train_sevendays_temprature_pair_list `Prelude.div` batchSize -- 1epochの間に実行する回数
-  (trained, losses_list) <- foldLoop (init, []) numIters $ \(state, loss_list) i -> do
+  (trained, losses_list, valid_losses_list,pair_list) <- foldLoop (init, [],[],train_sevendays_temprature_pair_list) numIters $ \(state, loss_list,valid_loss_list,pair_list) i -> do
     -- let (input, randGen') = randn' [batchSize, numFeatures] randGen --変数を減らす　input:バッチサイズ*特徴量の配列
     
     let start_number = (i `mod` perEpoch)* batchSize
         end_number = start_number + batchSize
-        input_list =  Prelude.take (end_number - start_number) (drop start_number train_sevendays_temprature_pair_list)--　バッチサイズ分もらってくる 
+        input_list =  Prelude.take (end_number - start_number) (drop start_number pair_list)--　バッチサイズ分もらってくる 
         (input_float, y_float) = unzip input_list
         input = asTensor input_float
         y = asTensor y_float
@@ -117,28 +132,34 @@ main = do
         loss = mseLoss y y' --mseの誤差
     -- 1epochごとに
     -- 1. リストの順番をシャッフルする
-    -- 2. evalを用いてロスを計算
-    when (i `mod` perEpoch == 0) $ do
+    -- 2. validを用いてロスを計算
+    when (i `mod` perEpoch == 0) $ do    
       let numEpoch = i `Prelude.div` perEpoch
-      --let losse
       putStrLn $ "epoch: " ++ show numEpoch ++ " | Loss: " ++ show loss --　１００回ごとに誤差を表示
-    (newParam, _) <- runStep state optimizer loss 1e-4 -- 更新してくれる関数 
+    (newParam, _) <- runStep state optimizer loss 1e-6 -- 更新してくれる関数 
     let new_loss_list = if i `mod` perEpoch == 0 then loss : loss_list 
                         else loss_list --エポック数が増えるごとにロスを更新
-    pure (newParam,new_loss_list)     
+    new_shuffle_list <- if i `mod` perEpoch == 0 then System.Random.Shuffle.shuffleM pair_list
+                        else pure pair_list
+    let new_valid_loss_list = if i `mod` perEpoch == 0 
+                              then let valid_y' = groundTruth (asTensor (Prelude.take batchSize valid_float_list)) newParam
+                                       valid_y = asTensor (Prelude.take batchSize valid_y_float)
+                                   in (mseLoss valid_y valid_y') : valid_loss_list
+                              else valid_loss_list
+    pure (newParam,new_loss_list,new_valid_loss_list,new_shuffle_list)    
   printParams trained
-  drawLearningCurve "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/linearregression/image/loss.image" "Learning Curve" [("loss",map asValue (reverse losses_list))] 
+  drawLearningCurve "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/linearregression/image/loss.png" "Learning Curve" [("train_loss",map asValue (reverse losses_list)),("valid_loss",map asValue (reverse valid_losses_list))] 
   pure ()
   where
     optimizer = GD --勾配降下法
     defaultRNG = mkGenerator (Device CPU 0) 31415
-    batchSize = 32
-    numIters = 10000
+    batchSize = 128
+    numIters = 2000
     numFeatures = 7 -- optimiser で暗点に陥らないように、やり方を考える今回は勾配
-  
+
   
   -- saveParams trainedModel "app/temperature/models/temp-model.pt"
-  -- drawLearningCurve "app/temperature/curves/graph-avg.png" "Learning Curve" [("",reverse losses)]
+  -- drawLearningCurve "app/temperature/curves/graph-avg.png" "Learning Curve" [("train_loss",reverse losses)]
 
 
 -- エポックデータ全部を１回ずつみた単位？
@@ -146,4 +167,4 @@ main = do
 -- この単位でロスを計測したい
 -- トレーニングにtrain.csv
 -- 評価 eval
--- train.csvだけだと過学習をしすぎちゃうのでvalid トレーニング中にロスは取るけど、そのモデルを使ってロスの更新はしない 過学習が起こったかどうかをevalデータで確認するグラフを出す
+-- train.csvだけだと過学習をしすぎちゃうのでvalid トレーニング中にロスは取るけど、そのモデルを使ってロスの更新はしない 過学習が起こったかどうかをvalidデータで確認するグラフを出す

@@ -28,6 +28,7 @@ dependencies:
 - bytestring
 - text
 - nlp-tools
+- random-shuffle
 
 ghc-options:
 - -Wall
