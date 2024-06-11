@@ -59,25 +59,25 @@ main = do
       MLPSpec
         { feature_counts = [2, 2, 1],
           nonlinearitySpec = Torch.tanh
-        } -- input 2 hidden 2 output 1
+        }
   trained <- foldLoop init numIters $ \state i -> do
-    input <- randIO' [batchSize, 2] >>= return . (toDType Float) . (gt 0.5) -- 2*2 (>.) = gt 0.5より大きいか小さいかで
-    let (y, y') = (tensorXOR input, squeezeAll $ model state input) --　逆伝播
-        loss = mseLoss y y' 
+    input <- randIO' [batchSize, 2] >>= return . (toDType Float) . (gt 0.5)
+    let (y, y') = (tensorXOR input, squeezeAll $ model state input)
+        loss = mseLoss y y'
     when (i `mod` 100 == 0) $ do
       putStrLn $ "Iteration: " ++ show i ++ " | Loss: " ++ show loss
-    (newState, _) <- runStep state optimizer loss 1e-1 
+    (newState, _) <- runStep state optimizer loss 1e-1
     return newState
   putStrLn "Final Model:"
-  putStrLn $ "0, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 0 :: Float])) -- xor 0
-  putStrLn $ "0, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 1 :: Float])) -- xor 1
-  putStrLn $ "1, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 0 :: Float])) -- xor 1
-  putStrLn $ "1, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 1 :: Float])) -- xor 0
+  putStrLn $ "0, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 0 :: Float]))
+  putStrLn $ "0, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 1 :: Float]))
+  putStrLn $ "1, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 0 :: Float]))
+  putStrLn $ "1, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 1 :: Float]))
   return ()
   where
     optimizer = GD
     tensorXOR :: Tensor -> Tensor
-    tensorXOR t = (1 - (1 - a) * (1 - b)) * (1 - (a * b)) -- 1-a:not a a*b:and　と考えると (not(not a and not b)and(not(a and b))
+    tensorXOR t = (1 - (1 - a) * (1 - b)) * (1 - (a * b))
       where
-        a = select 1 0 t --  0番目をとってくる
-        b = select 1 1 t --  1番目をとってくる
+        a = select 1 0 t
+        b = select 1 1 t
