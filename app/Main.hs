@@ -62,17 +62,19 @@ data NewTitanic = NewTitanic
   , embarked :: Float
   } deriving (Generic, Show)
 
+-- 
 data MLPSpec = MLPSpec
   { feature_counts :: [Int],
     nonlinearitySpec :: Tensor -> Tensor
   }
 
-data MLP = MLP
-  { layers :: [Linear],
+data MLP = MLP -- linearが重みとバイアス
+  { layers :: [Linear], -- 層ごとに重みとバイアスの値を入れる
     nonlinearity :: Tensor -> Tensor
   }
   deriving (Generic, Parameterized)
 
+-- string型をfloat型にする
 stringSexToFloat :: String -> Float
 stringSexToFloat s =
   if s == "male" then 1.0
@@ -84,6 +86,7 @@ stringEmbarkedToFloat e =
   else if e=="S" then 1.0
   else 2.0
 
+-- 空データがないかどうか確認する
 isFull :: Titanic -> Bool
 isFull Titanic{..} =
   isJust(survived) &&
@@ -134,30 +137,74 @@ instance FromNamedRecord Titanic where
     parseNamedRecord r = 
       Titanic <$> r .: "PassengerId" <*> r .: "Survived" <*> r .: "Pclass" <*> r .: "Name" <*> r .: "Sex" <*> r .: "Age" <*> r .: "SibSp" <*> r .: "Parch" <*> r .: "Ticket" <*> r .: "Fare" <*> r .: "Cabin" <*> r .: "Embarked"
 
-instance Randomizable MLPSpec MLP where
-  sample MLPSpec {..} = do
-    let layer_sizes = mkLayerSizes feature_counts
-    linears <- mapM sample $ map (uncurry LinearSpec) layer_sizes
+instance Randomizable MLPSpec MLP where 
+  sample MLPSpec {..} = do --sample MLPを作る関数
+    let layer_sizes = mkLayerSizes feature_counts -- [(a,b),(b,c)]
+    linears <- mapM sample $ map (uncurry LinearSpec) layer_sizes --それぞれにリニアスペック
     return $ MLP {layers = linears, nonlinearity = nonlinearitySpec}
-    where
-      mkLayerSizes (a : (b : t)) =
+    where 
+      mkLayerSizes (a : (b : t)) = 
         scanl shift (a, b) t
         where
           shift (a, b) c = (b, c)
 
-mlp :: MLP -> Tensor -> Tensor
+mlp :: MLP -> Tensor -> Tensor --ひっくり返す intersperse nonlinearity（非線形関数の名前）を間に入れる関数　
 mlp MLP {..} input = foldl' revApply input $ intersperse nonlinearity $ map linear layers
   where
     revApply x f = f x
+--  map linear layers layerひとつずつlinear型にする
 
+-- tpは真の陽性
+-- fpは偽の陽性
+-- fnは偽の陰性
+calculateprecision :: [Float] -> [Float] -> Float
+calculateprecision aclist calist = 
+  let tp = count aclist calist 1 1 
+      fp = count aclist calist 0 1
+  in tp / (tp+fp)
+
+calculaterecall :: [Float] -> [Float] -> Float
+calculaterecall aclist calist =
+  let tp = count aclist calist 1 1 
+      fn = count aclist calist 1 0
+  in tp/(tp+fn)
+
+calculateaccuracy :: [Float] -> [Float] -> Float
+calculateaccuracy aclist calist =
+  let tp = count aclist calist 1 1 
+      fp = count aclist calist 0 1
+      tn = count aclist calist 0 0
+      fn = count aclist calist 1 0
+  in (tp+tn)/(tp+fp+tn+fn)
+
+count :: [Float] -> [Float] -> Float -> Float -> Float
+count [] [] b c = 0.0
+count (ac:acl) (ca:cal) a c =
+  let cabi = if ca >= 0.5 then 1.0
+             else 0.0
+  in
+  if ac == a && cabi == c
+    then (count acl cal a c) + 1.0
+  else count acl cal a c
+--------------------------------------------------------------------------------
+--         predic_sur predic_dea
+-- act_sur     tp         fn
+-- act_dea     fp         tn
+---------------------------------------------------------------------------------
+makeConfusionMatrix :: [Float] -> [Float] -> [[Float]]
+makeConfusionMatrix aclist calist =
+  let tp = count aclist calist 1 1 
+      fp = count aclist calist 0 1
+      tn = count aclist calist 0 0
+      fn = count aclist calist 1 0
+  in [[tp,fp],[tn,fn]]
 --------------------------------------------------------------------------------
 -- Training code
--------------------------3-------------------------------------------------------
+---------------------------------------------------------------------------------
 
-batchSize = 10
+batchSize = 128
 
-numIters = 2000
- 
+
 model :: MLP -> Tensor -> Tensor
 model params t = mlp params t
 
@@ -168,45 +215,62 @@ main = do
         Left err -> []
         Right (_, v) -> makeNewTitanicList v
 
-  let input_list = newTitanicToPairList train_titanic_list
-      perEpoch = Prelude.length input_list `Prelude.div` batchSize
+  let list = newTitanicToPairList train_titanic_list
+      perEpoch = Prelude.length input_list `Prelude.div` batchSize -1
+      valid_list = Prelude.take batchSize list
+      input_list = Prelude.drop batchSize list
+      
   print(Prelude.take 5 train_titanic_list)
+
   init <-
     sample $
       MLPSpec
-        { feature_counts = [7, 7, 1],
-          nonlinearitySpec = Torch.tanh
+        { feature_counts = [7, 64, 1], --　入力層中間層出力層ごとの特徴量の数
+          nonlinearitySpec = Torch.tanh --　活性化関数
         } -- input 2 hidden 2 output 1
-  (trained,losses_list) <- foldLoop (init,[]) epoch $ \(state, losses_list) i -> do
-    (trained2,loss,pair_list) <- foldLoop (state,0,input_list) perEpoch $ \(state2,loss,pair_list) j -> do
-    -- input <- randIO' [batchSize, 2] >>= return . (toDType Float) . (gt 0.5) -- 2*2 (>.) = gt 0.5より大きいか小さいかで
+  (trained,epochlosses,validlosses,_) <- foldLoop (init,[],[],input_list) epoch $ \(state, losses_list,valid_losses_list,pair_list) i -> do
     
+    (trained2,batchloss) <- foldLoop (state,0) perEpoch $ \(state2,_) j -> do
+    -- input <- randIO' [batchSize, 2] >>= return . (toDType Float) . (gt 0.5) -- 2*2 (>.) = gt 0.5より大きいか小sampいかで
+      
       let start_number = j * batchSize
-          end_number = start_number + batchSize
-          (y_float,input_float) = unzip (Prelude.take (end_number - start_number) (drop start_number pair_list))
+          (y_float,input_float) = unzip (Prelude.take batchSize (drop start_number pair_list))
           input = asTensor input_float
-          (y, y') = (asTensor y_float, squeezeAll $ model state input) --　逆伝播
-          newloss = mseLoss y y' 
-          -- new_shuffle_list <- System.Random.Shuffle.shuffleM pair_list
-      
-      (newState, _) <- runStep state2 optimizer loss 1e-6 
-      
-      return (newState,newloss,pair_list)
-      
-      -- when (i `mod` 100 == 0) $ do
+      -- print(input)
+      let (y, y') = (asTensor y_float, squeezeAll $ model state2 input) --squeeze  二次元を一次元
+          loss = mseLoss y y'
+      let float_y' =  asValue y' :: [Float]
+      -- print y'
+      (newState, _) <- runStep state2 optimizer loss 1e-4 --　逆伝播
+
+      return (newState,loss)
+    -- print(i)
+    let (vy_float,valid_float) = unzip valid_list
+        valid = asTensor valid_float
+    -- print(valid)
+    let (vy, vy') = (asTensor vy_float, squeezeAll $ model trained2 valid)
+        validloss = mseLoss vy vy' 
+    -- let x = asTensor ([2,4] :: [Int]); y = asValue x :: [Int]
+    -- print vy'
+    let float_vy' =  asValue vy' :: [Float]
+    -- print(float_vy')
+    -- 
+    new_shuffle_list <- System.Random.Shuffle.shuffleM pair_list
+    when (i `mod` 100 == 0) $ do
+      -- print(Prelude.take 2 new_shuffle_list)
+      print(calculateaccuracy vy_float float_vy')
       --   putStrLn $ "Iteration: " ++ show i ++ " | Loss: " ++ show loss
-    return (trained2,[loss]++losses_list)
+    return (trained2,batchloss:losses_list,validloss:valid_losses_list,pair_list)
   -- putStrLn "Final Model:"
   -- putStrLn $ "0, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 0 :: Float])) -- xor 0
   -- putStrLn $ "0, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 1 :: Float])) -- xor 1
   -- putStrLn $ "1, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 0 :: Float])) -- xor 1
   -- putStrLn $ "1, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 1 :: Float])) -- xor 0
-  drawLearningCurve "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/xor-mlp/images/loss.png" "Learning Curve" [("train_loss",map asValue (reverse losses_list)),("valid_loss",map asValue (reverse losses_list))] 
-  pure ()
+  drawLearningCurve "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/xor-mlp/images/loss.png" "Learning Curve" [("train_loss",map asValue (reverse epochlosses)),("valid_loss",map asValue (reverse validlosses))]
   return ()
   where
     optimizer = GD
-    epoch = 1000
+    epoch = 1000 --あとで1000に
   
     -- tensorXOR t = (1 - (1 - a) * (1 - b)) * (1 - (a * b)) -- 1-a:not a a*b:and　と考えると (not(not a and not b)and(not(a and b))
     --   where
