@@ -136,9 +136,9 @@ newTitanicToPairList newtitaniclist = map newTitanicToPair newtitaniclist
 instance FromNamedRecord Titanic where
     parseNamedRecord r = 
       Titanic <$> r .: "PassengerId" <*> r .: "Survived" <*> r .: "Pclass" <*> r .: "Name" <*> r .: "Sex" <*> r .: "Age" <*> r .: "SibSp" <*> r .: "Parch" <*> r .: "Ticket" <*> r .: "Fare" <*> r .: "Cabin" <*> r .: "Embarked"
-
+-- toNamedRecordのインスタンスにする　passengerIdとSurvivedとペアを[a] decodeByName
 instance Randomizable MLPSpec MLP where 
-  sample MLPSpec {..} = do --sample MLPを作る関数
+  sample MLPSpec {..} = do --sample-MLPSpecからMLPを作る関数
     let layer_sizes = mkLayerSizes feature_counts -- [(a,b),(b,c)]
     linears <- mapM sample $ map (uncurry LinearSpec) layer_sizes --それぞれにリニアスペック
     return $ MLP {layers = linears, nonlinearity = nonlinearitySpec}
@@ -202,9 +202,9 @@ makeConfusionMatrix aclist calist =
 -- Training code
 ---------------------------------------------------------------------------------
 
-batchSize = 128
+batchSize = 256
 
-
+-- predictを計算してくれる
 model :: MLP -> Tensor -> Tensor
 model params t = mlp params t
 
@@ -217,22 +217,26 @@ main = do
 
   let list = newTitanicToPairList train_titanic_list
       perEpoch = Prelude.length input_list `Prelude.div` batchSize -1
-      valid_list = Prelude.take batchSize list
+      valid_list = Prelude.take batchSize list -- 8:2 9:1
       input_list = Prelude.drop batchSize list
-      
+  print (Prelude.length input_list)
+  test <- BL.readFile "app/xor-mlp/data/titanic/test.csv"
+  let test_titanic_list = case decodeByName test of
+        Left err -> []
+        Right (_, v) -> makeNewTitanicList v
+  let testlist = newTitanicToPairList test_titanic_list
   print(Prelude.take 5 train_titanic_list)
 
   init <-
     sample $
       MLPSpec
         { feature_counts = [7, 64, 1], --　入力層中間層出力層ごとの特徴量の数
-          nonlinearitySpec = Torch.tanh --　活性化関数
+          nonlinearitySpec = Torch.tanh -- Torch.sigmoid --　活性化関数
         } -- input 2 hidden 2 output 1
   (trained,epochlosses,validlosses,_) <- foldLoop (init,[],[],input_list) epoch $ \(state, losses_list,valid_losses_list,pair_list) i -> do
     
     (trained2,batchloss) <- foldLoop (state,0) perEpoch $ \(state2,_) j -> do
-    -- input <- randIO' [batchSize, 2] >>= return . (toDType Float) . (gt 0.5) -- 2*2 (>.) = gt 0.5より大きいか小sampいかで
-      
+    
       let start_number = j * batchSize
           (y_float,input_float) = unzip (Prelude.take batchSize (drop start_number pair_list))
           input = asTensor input_float
@@ -256,11 +260,15 @@ main = do
     -- print(float_vy')
     -- 
     new_shuffle_list <- System.Random.Shuffle.shuffleM pair_list
-    when (i `mod` 100 == 0) $ do
+    when (i `mod` 10 == 0) $ do
       -- print(Prelude.take 2 new_shuffle_list)
       print(calculateaccuracy vy_float float_vy')
       --   putStrLn $ "Iteration: " ++ show i ++ " | Loss: " ++ show loss
     return (trained2,batchloss:losses_list,validloss:valid_losses_list,pair_list)
+  -- let (ty_float,t_float) = unzip testlist
+  --     t_tensor = squeezeAll $ (model trained (asTensor t_float))
+  --     float_ty' = asValue t_tensor  :: [Float]
+  -- putStrLn("test recall:" ++ show (calculaterecall ty_float float_ty') ++ " precision:" ++ show (calculateprecision ty_float float_ty') ++ " accuracy:" ++ show (calculateaccuracy ty_float float_ty'))
   -- putStrLn "Final Model:"
   -- putStrLn $ "0, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 0 :: Float])) -- xor 0
   -- putStrLn $ "0, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 1 :: Float])) -- xor 1
@@ -270,7 +278,7 @@ main = do
   return ()
   where
     optimizer = GD
-    epoch = 1000 --あとで1000に
+    epoch = 500 --あとで1000に
   
     -- tensorXOR t = (1 - (1 - a) * (1 - b)) * (1 - (a * b)) -- 1-a:not a a*b:and　と考えると (not(not a and not b)and(not(a and b))
     --   where
