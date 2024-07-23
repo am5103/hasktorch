@@ -155,34 +155,25 @@ mlp MLP {..} input = foldl' revApply input $ intersperse nonlinearity $ map line
 -- tpは真の陽性
 -- fpは偽の陽性
 -- fnは偽の陰性
-calculateprecision :: Float -> Float -> Float
-calculateprecision tp fp = 
-  tp / (tp+fp)
+calculateprecision :: [Float] -> [Float] -> Float
+calculateprecision aclist calist = 
+  let tp = count aclist calist 1 1 
+      fp = count aclist calist 0 1
+  in tp / (tp+fp)
 
-calculaterecall :: Float -> Float -> Float
-calculaterecall tp fn =
-  tp/(tp+fn)
+calculaterecall :: [Float] -> [Float] -> Float
+calculaterecall aclist calist =
+  let tp = count aclist calist 1 1 
+      fn = count aclist calist 1 0
+  in tp/(tp+fn)
 
-calculateaccuracy :: Float -> Float -> Float -> Float -> Float
-calculateaccuracy tp fp tn fn =
-  (tp+tn)/(tp+fp+tn+fn)
-
-calculateF1Score :: Float -> Float -> Float
-calculateF1Score prec reca =
-  (2*prec*reca)/(prec+reca)
-
-calculatemacroF1Score :: Float -> Float -> Float
-calculatemacroF1Score fir sec =
-  (fir + sec)/2
-
-calculatemicroF1Score :: Float -> Float -> Float -> Float -> Float
-calculatemicroF1Score tp fp tn fn =
-  (tp+tn)/(tp+fp+tn+fn)
-
-calculateweightedf1score :: Float -> Float -> Float -> Float -> Float -> Float -> Float
-calculateweightedf1score fir sec tp fp tn fn =
-  fir*((tp+fp)/(tp+fp+tn+fn))+sec*fir*((tn+fn)/(tp+fp+tn+fn))
-
+calculateaccuracy :: [Float] -> [Float] -> Float
+calculateaccuracy aclist calist =
+  let tp = count aclist calist 1 1 
+      fp = count aclist calist 0 1
+      tn = count aclist calist 0 0
+      fn = count aclist calist 1 0
+  in (tp+tn)/(tp+fp+tn+fn)
 
 count :: [Float] -> [Float] -> Float -> Float -> Float
 count [] [] b c = 0.0
@@ -198,8 +189,6 @@ count (ac:acl) (ca:cal) a c =
 -- act_sur     tp         fn
 -- act_dea     fp         tn
 ---------------------------------------------------------------------------------
-
-
 makeConfusionMatrix :: [Float] -> [Float] -> [[Float]]
 makeConfusionMatrix aclist calist =
   let tp = count aclist calist 1 1 
@@ -225,10 +214,13 @@ main = do
         Right (_, v) -> makeNewTitanicList v
 
   let list = newTitanicToPairList train_titanic_list
-      test_list = Prelude.take batchSize list -- 8:2 9:1
+      valid_list = Prelude.take batchSize list -- 8:2 9:1
       input_list = Prelude.drop batchSize list
       
       perEpoch = ((Prelude.length input_list) `Prelude.div` batchSize) -1
+      
+  saveParams trained "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/xor-mlp/parameters/b"
+
   init <-
     sample $
       MLPSpec
@@ -236,46 +228,61 @@ main = do
           nonlinearitySpec = Torch.tanh -- Torch.sigmoid --　活性化関数
         } -- input 2 hidden 2 output 1
 
-  -- loadParams model filePath = do
-  -- tensors <- load filePath -- filepathからtensorのリストを読み込む
-  -- let params = map IndependentTensor tensors-- tensor一つ一つIndependentTensor型にする
-  -- pure $ replaceParameters model params -- paramsにモデルを置き換える
+  -- let (iy_float,iinput_float) = unzip (Prelude.take batchSize (drop batchSize input_list))
+  --     iinput = asTensor iinput_float
+  --     -- print(input)
+  -- let (iy, iy') = (asTensor iy_float, squeezeAll $ model init iinput) --squeeze  二次元を一次元
+  --     iloss = mseLoss iy iy'
+  (trained,epochlosses,validlosses,_) <- foldLoop (init,[],[],input_list) epoch $ \(state, losses_list,valid_losses_list,pair_list) i -> do
+    (trained2,batchloss) <- foldLoop (state,0) perEpoch $ \(state2,_) j -> do
+      -- print(j)
+      let start_number = j * batchSize
+          (y_float,input_float) = unzip (Prelude.take batchSize (drop start_number pair_list))
+          input = asTensor input_float
+      -- print(input)
+      let (y, y') = (asTensor y_float, squeezeAll $ model state2 input) --squeeze  二次元を一次元
+          loss = mseLoss y y'
+      let float_y' =  asValue y' :: [Float]
+      -- print y'
+      (newState, _) <- runStep state2 optimizer loss 1e-4 --　逆伝播
+      return (newState,loss)
+    -- print(i)
+    let (vy_float,valid_float) = unzip valid_list
+        valid = asTensor valid_float
+    -- print(valid)
+    let (vy, vy') = (asTensor vy_float, squeezeAll $ model trained2 valid)
+        validloss = mseLoss vy vy' 
+    -- let x = asTensor ([2,4] :: [Int]); y = asValue x :: [Int]
+    -- print vy'
+    let float_vy' =  asValue vy' :: [Float]
+    -- print(float_vy')
+    -- 
+    new_shuffle_list <- System.Random.Shuffle.shuffleM pair_list
+    when (i `mod` 10 == 0) $ do
+      print(Prelude.take 2 new_shuffle_list)
+      print(i)
+      print(calculateaccuracy vy_float float_vy')
+      print(validloss)
+      print(batchloss)
       
-  trainedmodel <- loadParams init "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/xor-mlp/parameters/b"
-  let (ty_float,test_float) = unzip test_list
-      test = asTensor test_float
-  --   -- print(test)
-  let (ty, ty') = (asTensor ty_float, squeezeAll $ model trainedmodel test)
-      testloss = mseLoss ty ty' 
-  let float_ty' =  asValue ty' :: [Float]
-  let aclist = ty_float 
-      calist = float_ty'
-  let tps = count aclist calist 1 1 
-      fps = count aclist calist 0 1
-      tns = count aclist calist 0 0
-      fns = count aclist calist 1 0
-  let tnd = count aclist calist 1 1 
-      fnd = count aclist calist 0 1
-      tpd = count aclist calist 0 0
-      fpd = count aclist calist 1 0
+      --   putStrLn $ "Iteration: " ++ show i ++ " | Loss: " ++ show loss
+    return (trained2,batchloss:losses_list,validloss:valid_losses_list,new_shuffle_list)
 
-  let f1s = calculateF1Score (calculateprecision tps fps) (calculaterecall tps fns)
-      f1d = calculateF1Score (calculateprecision tpd fpd) (calculaterecall tpd fnd)
-
-  
-  putStrLn("survived recall:" ++ show (calculaterecall tps fns) ++ " precision:" ++ show (calculateprecision tps fps) ++ " f1score:" ++ show (f1s))
-  putStrLn("dead recall:" ++ show (calculaterecall tpd fnd) ++ " precision:" ++ show (calculateprecision tpd fpd) ++ " f1score:" ++ show (f1d))
-  print("confusion matrix")
-  print(show (makeConfusionMatrix ty_float float_ty'))
-  print("accuracy")
-  print(show (calculateaccuracy tps fps tns fns)) 
-  putStrLn("macro-F1Score:" ++ show (calculatemacroF1Score f1s f1d) ++ "micro-F1Score:" ++ show (calculatemicroF1Score tps fps tns fns) ++ "weightned-F1Score:" ++ show (calculateweightedf1score f1s f1d tps fps tns fns))
-  
+  -- print(testlist)
+  putStrLn("test recall:" ++ show (calculaterecall ty_float float_ty') ++ " precision:" ++ show (calculateprecision ty_float float_ty') ++ " accuracy:" ++ show (calculateaccuracy ty_float float_ty'))
+  -- putStrLn "Final Model:"
+  -- putStrLn $ "0, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 0 :: Float])) -- xor 0
+  -- putStrLn $ "0, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [0, 1 :: Float])) -- xor 1
+  -- putStrLn $ "1, 0 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 0 :: Float])) -- xor 1
+  -- putStrLn $ "1, 1 => " ++ (show $ squeezeAll $ model trained (asTensor [1, 1 :: Float])) -- xor 0
+  -- drawLearningCurve "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/xor-mlp/images/lossc.png" "Learning Curve" [("train_loss",map (asValue . toType Float) (reverse epochlosses)),("valid_loss",map (asValue . toType Float) (reverse validlosses))]
+  -- print(show trained)
+  saveParams trained "/home/acf16407il/.local/lib/hasktorch/bordeaux-intern2024/app/xor-mlp/parameters/b"
 
   return ()
-  -- where
-    -- optimizer = GD
-    -- epoch = 200 --あとで1000に
+  where
+    optimizer = GD
+    epoch = 200 --あとで1000に
   
     -- tensorXOR t = (1 - (1 - a) * (1 - b)) * (1 - (a * b)) -- 1-a:not a a*b:and　と考えると (not(not a and not b)and(not(a and b))
     --   where
